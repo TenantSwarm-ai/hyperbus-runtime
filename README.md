@@ -9,9 +9,9 @@ is bound, and that workers never hold database credentials.
 
 ## Status
 
-**Pre-alpha scaffold.** Spec and package layout are in place; RPC engine daemon
-and LangGraph worker integration are not yet implemented. See
-[`specs/001-runtime-isolation/spec.md`](specs/001-runtime-isolation/spec.md).
+**Alpha.** Engine sidecar RPC (`hyperbus-engine`), worker identity binding
+(`hyperbus-worker`), and LangGraph checkpointer integration over IPC are
+implemented. See [`specs/001-runtime-isolation/spec.md`](specs/001-runtime-isolation/spec.md).
 
 ## Problem
 
@@ -63,7 +63,7 @@ pip install -e ../hyperbus-core
 pip install -e '.[dev,langgraph,postgres]'
 ```
 
-## Quick start (when implemented)
+## Quick start
 
 ```bash
 # Terminal 1 — engine sidecar

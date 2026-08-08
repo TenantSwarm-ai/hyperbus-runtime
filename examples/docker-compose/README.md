@@ -5,7 +5,7 @@ containers; only `hyperbus-engine` reaches Postgres.
 
 ```bash
 cd examples/docker-compose
-docker compose up --build   # fails until RPC engine is implemented
+docker compose up --build
 ```
 
 Grant file: [`acme-grants.yaml`](acme-grants.yaml).

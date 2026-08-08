@@ -2,19 +2,37 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any
 
 from hyperbus_runtime.config import WorkerContext
 
+_log = logging.getLogger("hyperbus_runtime.shared")
+
 _group_stores: dict[str, dict[str, Any]] = {}
 _group_lock = threading.Lock()
 _bound_context: WorkerContext | None = None
+_audit_events: list[dict[str, Any]] = []
 
 
 def bind_context(ctx: WorkerContext) -> None:
     global _bound_context
     _bound_context = ctx
+    if ctx.colocate_group:
+        _record_audit(
+            "colocation.group.join",
+            group=ctx.colocate_group,
+            profile=ctx.profile,
+            agent_id=ctx.agent_id,
+        )
+        if ctx.profile in ("pool", "cohost", "inline"):
+            _record_audit(
+                "colocation.ram.shared",
+                group=ctx.colocate_group,
+                profile=ctx.profile,
+                agent_id=ctx.agent_id,
+            )
 
 
 def namespace(name: str | None = None) -> dict[str, Any]:
@@ -38,3 +56,21 @@ def namespace(name: str | None = None) -> dict[str, Any]:
         if group not in _group_stores:
             _group_stores[group] = {}
         return _group_stores[group]
+
+
+def audit_events() -> list[dict[str, Any]]:
+    """Return colocation audit events emitted in this process."""
+    return list(_audit_events)
+
+
+def _record_audit(event_type: str, **detail: Any) -> None:
+    if _bound_context is None:
+        return
+    event = {
+        "event_type": event_type,
+        "tenant_id": _bound_context.tenant_id,
+        "agent_id": _bound_context.agent_id,
+        "detail": detail,
+    }
+    _audit_events.append(event)
+    _log.info("hyperbus colocation audit: %s", event)

@@ -8,6 +8,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from hyperbus_runtime import shared
+from hyperbus_runtime.checkpointer import IdentityBoundSaver
 from hyperbus_runtime.client import connect_from_env
 from hyperbus_runtime.config import ColocationPolicy, WorkerContext
 
@@ -34,15 +35,29 @@ def bind_from_env() -> WorkerContext:
     return ctx
 
 
-def checkpointer():
-    """Return a LangGraph checkpointer backed by the engine sidecar (planned)."""
-    bind_from_env()
-    connect_from_env()
-    msg = (
-        "Runtime checkpointer wrapper over hyperbus-langgraph is not implemented. "
-        "Track specs/001-runtime-isolation/spec.md US-1/US-2."
-    )
-    raise NotImplementedError(msg)
+def get_client() -> EngineClient:
+    """Return the worker's engine RPC client, connecting on first use."""
+    global _client
+    if _client is None:
+        ctx = bind_from_env()
+        _client = connect_from_env(tenant_id=ctx.tenant_id, agent_id=ctx.agent_id)
+    return _client
+
+
+def checkpointer() -> IdentityBoundSaver:
+    """Return a LangGraph checkpointer backed by the engine sidecar."""
+    ctx = bind_from_env()
+    return IdentityBoundSaver(ctx, get_client())
+
+
+def inject_langgraph_config(config: dict | None = None) -> dict:
+    """Merge worker-bound identity into LangGraph configurable keys."""
+    ctx = bind_from_env()
+    merged = dict(config or {})
+    configurable = dict(merged.get("configurable") or {})
+    configurable.update(ctx.langgraph_configurable())
+    merged["configurable"] = configurable
+    return merged
 
 
 def main() -> None:
@@ -51,7 +66,7 @@ def main() -> None:
         print("Usage: hyperbus-worker <command> [args...]", file=sys.stderr)
         sys.exit(2)
     bind_from_env()
-    connect_from_env()
+    get_client()
     sys.argv = sys.argv[1:]
     if sys.argv[0] == "python" and len(sys.argv) > 1:
         sys.argv = sys.argv[1:]
