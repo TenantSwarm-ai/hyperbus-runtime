@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hyperbus-runtime"
+version = "0.1.0.dev0"
+description = "Process isolation and agent identity binding for HyperBus deployments"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = [
+    "hyperbus",
+    "langgraph",
+    "agent",
+    "isolation",
+    "runtime",
+    "multi-tenant",
+]
+authors = [{ name = "TenantSwarm.ai" }]
+dependencies = [
+    "hyperbus-core>=0.1.0.dev0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+langgraph = [
+    "hyperbus-langgraph>=0.1.0.dev0",
+]
+postgres = [
+    "hyperbus-core[postgres]>=0.1.0.dev0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "hyperbus-core[postgres,dev]>=0.1.0.dev0",
+]
+
+[project.urls]
+Homepage = "https://github.com/TenantSwarm-ai/hyperbus-runtime"
+Repository = "https://github.com/TenantSwarm-ai/hyperbus-runtime"
+Documentation = "https://github.com/TenantSwarm-ai/hyperbus-runtime#readme"
+"HyperBus Core" = "https://github.com/TenantSwarm-ai/hyperbus-core"
+"LangGraph adapter" = "https://github.com/TenantSwarm-ai/hyperbus-langgraph"
+
+[project.scripts]
+hyperbus-worker = "hyperbus_runtime.worker:main"
+hyperbus-engine = "hyperbus_runtime.engine_daemon:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hyperbus_runtime"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/hyperbus_runtime"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
