@@ -1,0 +1,8 @@
+tenant_id: acme
+grants:
+  support-bot:
+    support: READ_WRITE
+    hyperbus-meta: READ_WRITE
+  billing-bot:
+    billing: READ_WRITE
+    hyperbus-meta: READ_WRITE
