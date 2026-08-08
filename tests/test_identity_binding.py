@@ -87,7 +87,7 @@ def test_checkpointer_put_and_get_tuple(
     }
     metadata: CheckpointMetadata = {"source": "test", "step": 1, "writes": {}}
     saved = saver.put(config, checkpoint, metadata, {})
-    assert saved["id"] == "c1"
+    assert saved["configurable"]["checkpoint_id"] == "c1"
     loaded = saver.get_tuple(config)
     assert loaded is not None
     assert loaded.checkpoint["id"] == "c1"
