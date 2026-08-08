@@ -1,5 +1,6 @@
 # Reference layout — engine sidecar + two isolated agent workers.
-# Requires hyperbus-runtime implementation (RPC) before `docker compose up` succeeds.
+# Build from monorepo root (hyperbus-core, hyperbus-langgraph, hyperbus-runtime siblings).
+# HTTP RPC requires HYPERBUS_RPC_TOKEN on engine and workers (network-trust boundary).
 
 services:
   postgres:
@@ -17,21 +18,14 @@ services:
 
   hyperbus-engine:
     build:
-      context: ../..
-      dockerfile: Dockerfile.engine
+      context: ../../..
+      dockerfile: hyperbus-runtime/Dockerfile.engine
     environment:
       HB_TENANT_ID: acme
       DATABASE_URL: postgresql://hyperbus:hyperbus@postgres:5432/hyperbus
+      HYPERBUS_RPC_TOKEN: dev-compose-token-change-me
     volumes:
       - ./acme-grants.yaml:/etc/hyperbus/grants.yaml:ro
-    command:
-      - hyperbus-engine
-      - --tenant
-      - acme
-      - --grants
-      - /etc/hyperbus/grants.yaml
-      - --listen
-      - "0.0.0.0:8080"
     networks: [hb-internal, hb-agents]
     depends_on:
       postgres:
@@ -39,27 +33,29 @@ services:
 
   support-bot:
     build:
-      context: ../..
-      dockerfile: Dockerfile.worker
+      context: ../../..
+      dockerfile: hyperbus-runtime/Dockerfile.worker
     environment:
       HB_TENANT_ID: acme
       HB_AGENT_ID: support-bot
       HB_DEFAULT_REGION: support
       HB_ISOLATION_PROFILE: isolate
       HYPERBUS_ENGINE_URL: http://hyperbus-engine:8080
+      HYPERBUS_RPC_TOKEN: dev-compose-token-change-me
     networks: [hb-agents]
     depends_on: [hyperbus-engine]
 
   billing-bot:
     build:
-      context: ../..
-      dockerfile: Dockerfile.worker
+      context: ../../..
+      dockerfile: hyperbus-runtime/Dockerfile.worker
     environment:
       HB_TENANT_ID: acme
       HB_AGENT_ID: billing-bot
       HB_DEFAULT_REGION: billing
       HB_ISOLATION_PROFILE: isolate
       HYPERBUS_ENGINE_URL: http://hyperbus-engine:8080
+      HYPERBUS_RPC_TOKEN: dev-compose-token-change-me
     networks: [hb-agents]
     depends_on: [hyperbus-engine]
 

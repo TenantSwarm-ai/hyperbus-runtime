@@ -21,6 +21,7 @@ class WorkerContext:
     default_region: str = "hyperbus-meta"
     colocate_group: str | None = None
     profile: str = "isolate"
+    worker_id: str | None = None
 
     @classmethod
     def from_env(cls) -> WorkerContext:
@@ -34,6 +35,7 @@ class WorkerContext:
             default_region=os.environ.get("HB_DEFAULT_REGION", "hyperbus-meta"),
             colocate_group=os.environ.get("HB_COLOCATE_GROUP"),
             profile=os.environ.get("HB_ISOLATION_PROFILE", "isolate"),
+            worker_id=os.environ.get("HB_WORKER_ID"),
         )
 
     def langgraph_configurable(self) -> dict[str, str]:
@@ -45,6 +47,8 @@ class WorkerContext:
         }
 
     def validate_profile(self) -> None:
+        if self.profile == "perf":
+            return
         if self.profile == "isolate" and self.colocate_group:
             msg = (
                 "isolate profile must not set HB_COLOCATE_GROUP; "

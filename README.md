@@ -9,9 +9,10 @@ is bound, and that workers never hold database credentials.
 
 ## Status
 
-**Alpha.** Engine sidecar RPC (`hyperbus-engine`), worker identity binding
-(`hyperbus-worker`), and LangGraph checkpointer integration over IPC are
-implemented. See [`specs/001-runtime-isolation/spec.md`](specs/001-runtime-isolation/spec.md).
+**Beta.** Engine sidecar RPC, worker identity binding, LangGraph checkpointer
+integration, colocation enforcement, systemd/Compose reference deployments, and
+optional `perf` profile are implemented. See
+[`specs/001-runtime-isolation/spec.md`](specs/001-runtime-isolation/spec.md).
 
 ## Problem
 

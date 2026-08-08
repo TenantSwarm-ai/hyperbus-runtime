@@ -67,17 +67,17 @@ workers:
 
 Publish this in deployment docs and audit logs when groups are formed.
 
-## API (planned)
+## API
 
 ```python
 from hyperbus_runtime import worker, shared
 
-worker.bind_from_env()  # HB_TENANT_ID, HB_AGENT_ID
+worker.bind_from_env()  # HB_TENANT_ID, HB_AGENT_ID, optional HB_COLOCATION_POLICY
 
-cache = shared.namespace()  # bound to worker's colocate_group
-cache.set("active_tickets", {...})
+cache = shared.namespace()  # bound to worker's colocate_group; cross-group requires policy
+cache["active_tickets"] = {...}
 
-checkpointer = worker.checkpointer()  # always via engine RPC
+checkpointer = worker.checkpointer()  # always via engine RPC (or perf in-process)
 ```
 
 ## Audit events

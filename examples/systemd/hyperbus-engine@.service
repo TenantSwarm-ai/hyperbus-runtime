@@ -1,0 +1,22 @@
+[Unit]
+Description=HyperBus engine sidecar for tenant %i
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=hb-engine-%i
+Group=hb-engine
+RuntimeDirectory=hyperbus
+RuntimeDirectoryMode=0750
+Environment=DATABASE_URL=postgresql://hyperbus:@127.0.0.1:5432/hyperbus
+ExecStart=/opt/hyperbus/venv/bin/hyperbus-engine \
+  --tenant %i \
+  --grants /etc/hyperbus/%i-grants.yaml \
+  --socket /run/hyperbus/%i.sock \
+  --peer-agent-map /etc/hyperbus/peer-agents.yaml \
+  --socket-group hb-agents
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

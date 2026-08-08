@@ -27,7 +27,12 @@ def test_handle_unix_connection_multiple_requests(grants_file) -> None:
         thread = __import__("threading").Thread(
             target=_handle_unix_connection,
             args=(server_sock,),
-            kwargs={"engine": engine, "tenant_id": "acme"},
+            kwargs={
+                "engine": engine,
+                "tenant_id": "acme",
+                "audit": None,
+                "peer_agent_map": {},
+            },
             daemon=True,
         )
         thread.start()
@@ -38,7 +43,9 @@ def test_handle_unix_connection_multiple_requests(grants_file) -> None:
         line = client_sock.makefile("rb").readline()
         response = json.loads(line.decode("utf-8"))
         assert response["ok"] is True
+        client_sock.shutdown(socket.SHUT_WR)
         thread.join(timeout=2)
+        assert not thread.is_alive()
     finally:
         client_sock.close()
         server_sock.close()

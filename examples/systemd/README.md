@@ -12,6 +12,18 @@ Reference units for **isolate** profile on a single host.
 
 Socket: `/run/hyperbus/acme.sock` (group `hb-agents`).
 
+Optional Unix peer binding: [`peer-agents.yaml`](peer-agents.yaml) maps worker uid → `agent_id`
+via `--peer-agent-map` on the engine (see `SO_PEERCRED` in design doc).
+
+## Install
+
+```bash
+sudo cp hyperbus-engine@.service support-bot.service billing-bot.service /etc/systemd/system/
+sudo cp peer-agents.yaml /etc/hyperbus/
+sudo systemctl daemon-reload
+sudo systemctl enable --now hyperbus-engine@acme.service support-bot.service billing-bot.service
+```
+
 ## Environment (support-bot.service excerpt)
 
 ```ini
@@ -25,5 +37,4 @@ ExecStart=/opt/hyperbus/venv/bin/hyperbus-worker python /opt/agents/support/grap
 
 Engine holds `DATABASE_URL`; workers do not.
 
-Full unit files to be added when RPC daemon lands — track
-[`specs/001-runtime-isolation/spec.md`](../../specs/001-runtime-isolation/spec.md).
+See [`../../specs/001-runtime-isolation/design.md`](../../specs/001-runtime-isolation/design.md).
