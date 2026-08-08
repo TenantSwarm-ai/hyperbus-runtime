@@ -15,7 +15,7 @@ from hyperbus_runtime.engine_daemon import _build_backend, serve_engine
 from hyperbus_runtime.grants import load_grants_yaml
 from hyperbus_runtime.remote_engine import RemoteHyperBusEngine
 from hyperbus_runtime.rpc_codec import decode, encode
-from hyperbus_runtime.rpc_dispatch import RpcValidationError, dispatch_request
+from hyperbus_runtime.rpc_dispatch import dispatch_request
 from hyperbus_runtime.rpc_server import UnixRpcServer
 from hyperbus_runtime import shared
 from hyperbus_runtime.worker import bind_from_env, main
