@@ -68,19 +68,13 @@ def serve_engine(
             file=sys.stderr,
         )
     if socket_path:
-        if not hasattr(os, "bind"):  # pragma: no cover - non-Unix platforms
-            print(
-                f"Skipping Unix socket {socket_path!r} on this platform",
-                file=sys.stderr,
-            )
-        else:
-            unix = UnixRpcServer(socket_path, engine=engine, tenant_id=tenant_id)
-            unix.start()
-            servers.append(unix)
-            print(
-                f"hyperbus-engine listening on unix://{socket_path}",
-                file=sys.stderr,
-            )
+        unix = UnixRpcServer(socket_path, engine=engine, tenant_id=tenant_id)
+        unix.start()
+        servers.append(unix)
+        print(
+            f"hyperbus-engine listening on unix://{socket_path}",
+            file=sys.stderr,
+        )
     if not servers:
         msg = "At least one of --listen or --socket must be configured"
         raise RuntimeError(msg)

@@ -55,12 +55,18 @@ def test_client_raises_tenant_isolation_error(engine_server) -> None:
     assert response["error"]["type"] == "TenantIsolationError"
 
 
-def test_unix_rpc_server_roundtrip(tmp_path, grants_file) -> None:
-    if not hasattr(os, "bind"):
+def _short_unix_path(name: str) -> str:
+    return f"/tmp/{name}.sock"
+
+
+def test_unix_rpc_server_roundtrip(grants_file) -> None:
+    if not hasattr(socket, "AF_UNIX"):
         pytest.skip("Unix sockets unavailable")
     registry = load_grants_yaml(grants_file, tenant_id="acme")
     engine = HyperBusEngine("acme", InMemoryBackend(), registry)
-    socket_path = str(tmp_path / "engine.sock")
+    socket_path = _short_unix_path("hb-runtime-roundtrip")
+    if os.path.exists(socket_path):
+        os.unlink(socket_path)
     server = UnixRpcServer(socket_path, engine=engine, tenant_id="acme")
     server.start()
     try:
@@ -91,12 +97,17 @@ def test_shared_namespace_requires_bind() -> None:
         shared.namespace()
 
 
-def test_shared_namespace_requires_group(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HB_TENANT_ID", "acme")
-    monkeypatch.setenv("HB_AGENT_ID", "support-bot")
-    monkeypatch.setenv("HB_ISOLATION_PROFILE", "pool")
-    monkeypatch.setenv("HYPERBUS_ENGINE_URL", "http://127.0.0.1:1")
-    bind_from_env()
+def test_shared_namespace_requires_group() -> None:
+    from hyperbus_runtime.config import WorkerContext
+
+    shared.bind_context(
+        WorkerContext(
+            tenant_id="acme",
+            agent_id="support-bot",
+            profile="pool",
+            colocate_group=None,
+        )
+    )
     with pytest.raises(RuntimeError, match="colocate_group"):
         shared.namespace()
 
