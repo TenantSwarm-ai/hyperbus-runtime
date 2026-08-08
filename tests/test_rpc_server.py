@@ -28,12 +28,35 @@ def test_http_handler_rejects_invalid_json(engine_server) -> None:
     request = urllib.request.Request(
         f"{url}/rpc",
         data=b"{not-json",
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "X-HyperBus-Token": "test-rpc-token",
+        },
         method="POST",
     )
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(request, timeout=5)
     assert exc.value.code == 400
+
+
+def test_http_handler_rejects_missing_token(engine_server) -> None:
+    url, _engine = engine_server
+    body = json.dumps(
+        {
+            "op": "runtime.ping",
+            "tenant_id": "acme",
+            "agent_id": "support-bot",
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{url}/rpc",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(request, timeout=5)
+    assert exc.value.code == 401
 
 
 def test_http_handler_accepts_valid_request(engine_server) -> None:
@@ -48,7 +71,10 @@ def test_http_handler_accepts_valid_request(engine_server) -> None:
     request = urllib.request.Request(
         f"{url}/rpc",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "X-HyperBus-Token": "test-rpc-token",
+        },
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=5) as response:

@@ -8,10 +8,11 @@ import threading
 from unittest.mock import patch
 
 import pytest
-from hyperbus_core import HyperBusEngine, InMemoryBackend
+from hyperbus_core import HyperBusEngine, InMemoryAuditStore, InMemoryBackend
 
 from hyperbus_runtime.client import _RpcTransportClient
-from hyperbus_runtime.engine_daemon import _build_backend, serve_engine
+from hyperbus_runtime.engine_daemon import _build_backend
+from hyperbus_runtime.rpc_server import HttpRpcServer
 from hyperbus_runtime.grants import load_grants_yaml
 from hyperbus_runtime.remote_engine import RemoteHyperBusEngine
 from hyperbus_runtime.rpc_codec import decode, encode
@@ -130,27 +131,27 @@ def test_worker_main_exec_python(tmp_path, monkeypatch: pytest.MonkeyPatch, caps
     assert "hello-from-worker" in capsys.readouterr().out
 
 
-def test_serve_engine_shutdown(grants_file, tmp_path) -> None:
+def test_http_rpc_server_start_stop(grants_file) -> None:
+    audit = InMemoryAuditStore()
     engine = HyperBusEngine(
         "acme",
         InMemoryBackend(),
         load_grants_yaml(grants_file, tenant_id="acme"),
+        audit=audit,
     )
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     _, port = sock.getsockname()
     sock.close()
-
-    def stop_soon() -> None:
-        os.kill(os.getpid(), 15)
-
-    threading.Timer(0.2, stop_soon).start()
-    serve_engine(
-        engine,
+    server = HttpRpcServer(
+        "127.0.0.1",
+        port,
+        engine=engine,
         tenant_id="acme",
-        socket_path=None,
-        listen=f"127.0.0.1:{port}",
+        audit=audit,
     )
+    server.start()
+    server.stop()
 
 
 def test_grants_invalid_agent_map(tmp_path) -> None:

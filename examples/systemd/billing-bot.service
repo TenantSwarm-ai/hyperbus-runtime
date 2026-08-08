@@ -1,0 +1,19 @@
+[Unit]
+Description=HyperBus billing agent worker
+After=hyperbus-engine@acme.service
+Requires=hyperbus-engine@acme.service
+
+[Service]
+Type=simple
+User=hb-agent-billing
+Group=hb-agents
+Environment=HB_TENANT_ID=acme
+Environment=HB_AGENT_ID=billing-bot
+Environment=HB_DEFAULT_REGION=billing
+Environment=HB_ISOLATION_PROFILE=isolate
+Environment=HYPERBUS_SOCKET=/run/hyperbus/acme.sock
+ExecStart=/opt/hyperbus/venv/bin/hyperbus-worker python /opt/agents/billing/graph.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

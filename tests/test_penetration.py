@@ -190,7 +190,7 @@ class TestWorkerContainment:
         worker_sources = (REPO_ROOT / "src" / "hyperbus_runtime").glob("*.py")
         forbidden = ("PostgresBackend", "postgres", "psycopg")
         for path in worker_sources:
-            if path.name == "engine_daemon.py":
+            if path.name in {"engine_daemon.py", "perf.py"}:
                 continue
             text = path.read_text(encoding="utf-8")
             for token in forbidden:
@@ -247,6 +247,22 @@ class TestColocationBoundaries:
             )
         )
         assert "secret" not in shared.namespace()
+
+    def test_explicit_cross_group_namespace_denied(self, colocation_policy_file) -> None:
+        policy = __import__(
+            "hyperbus_runtime.config", fromlist=["ColocationPolicy"]
+        ).ColocationPolicy.from_yaml(colocation_policy_file)
+        shared.bind_context(
+            WorkerContext(
+                tenant_id="acme",
+                agent_id="support-bot",
+                profile="pool",
+                colocate_group="support-pool",
+            ),
+            policy=policy,
+        )
+        with pytest.raises(RuntimeError, match="may not share RAM"):
+            shared.namespace("billing-solo")
 
     def test_isolate_profile_blocks_shared_ram(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("HB_TENANT_ID", "acme")

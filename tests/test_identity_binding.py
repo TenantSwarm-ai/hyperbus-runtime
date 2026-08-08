@@ -94,6 +94,7 @@ def test_checkpointer_put_and_get_tuple(
 
 
 def test_bind_from_env_records_colocation_audit(
+    colocation_policy_file,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from hyperbus_runtime import shared
@@ -102,6 +103,7 @@ def test_bind_from_env_records_colocation_audit(
     monkeypatch.setenv("HB_AGENT_ID", "support-bot")
     monkeypatch.setenv("HB_ISOLATION_PROFILE", "pool")
     monkeypatch.setenv("HB_COLOCATE_GROUP", "support-pool")
+    monkeypatch.setenv("HB_COLOCATION_POLICY", str(colocation_policy_file))
     monkeypatch.setenv("HYPERBUS_ENGINE_URL", "http://127.0.0.1:1")
     bind_from_env()
     events = shared.audit_events()

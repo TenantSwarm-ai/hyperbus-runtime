@@ -1,0 +1,8 @@
+# Map Linux uids for worker service users to agent_id values.
+# Create users with fixed uids before enabling peer binding:
+#   sudo groupadd hb-agents
+#   sudo useradd -r -u 995 -g hb-agents hb-agent-support
+#   sudo useradd -r -u 996 -g hb-agents hb-agent-billing
+peer_agents:
+  995: support-bot
+  996: billing-bot

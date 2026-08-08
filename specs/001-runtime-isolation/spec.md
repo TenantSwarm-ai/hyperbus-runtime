@@ -1,6 +1,6 @@
 # Feature Spec: Runtime Isolation
 
-**Status:** Draft (scaffold)  
+**Status:** Beta  
 **Repository:** `hyperbus-runtime` (sibling to `hyperbus-core`)  
 **Constitution:** HyperBus org — Articles II.4, VII.2, VII.3  
 **Core pointer:** [`hyperbus-core/specs/012-runtime-isolation`](https://github.com/TenantSwarm-ai/hyperbus-core/blob/main/specs/012-runtime-isolation/spec.md)

@@ -36,6 +36,7 @@ class _RpcTransportClient:
         http_url: str | None = None,
         socket_path: str | None = None,
         timeout: float = 30.0,
+        rpc_token: str | None = None,
     ) -> None:
         if not http_url and not socket_path:
             msg = "Engine client requires http_url or socket_path"
@@ -43,6 +44,12 @@ class _RpcTransportClient:
         self._http_url = http_url.rstrip("/") if http_url else None
         self._socket_path = socket_path
         self._timeout = timeout
+        if rpc_token is not None:
+            self._rpc_token = rpc_token
+        elif http_url:
+            self._rpc_token = os.environ.get("HYPERBUS_RPC_TOKEN")
+        else:
+            self._rpc_token = None
 
     def call(
         self,
@@ -75,10 +82,13 @@ class _RpcTransportClient:
         return self._post_unix(body)
 
     def _post_http(self, body: bytes) -> dict[str, Any]:
+        headers = {"Content-Type": "application/json"}
+        if self._rpc_token:
+            headers["X-HyperBus-Token"] = self._rpc_token
         request = urllib.request.Request(
             f"{self._http_url}/rpc",
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
@@ -114,6 +124,8 @@ class _RpcTransportClient:
             raise CapabilityError(message)
         if error_type == "TenantIsolationError":
             raise TenantIsolationError(message)
+        if error_type == "PermissionError":
+            raise PermissionError(message)
         raise RuntimeError(f"{error_type}: {message}")
 
 
@@ -121,8 +133,19 @@ def connect_from_env(*, tenant_id: str, agent_id: str) -> EngineClient:
     """Build client from HYPERBUS_SOCKET or HYPERBUS_ENGINE_URL."""
     socket_path = os.environ.get("HYPERBUS_SOCKET")
     http_url = os.environ.get("HYPERBUS_ENGINE_URL")
+    rpc_token = os.environ.get("HYPERBUS_RPC_TOKEN")
     if not socket_path and not http_url:
         msg = "Set HYPERBUS_SOCKET or HYPERBUS_ENGINE_URL for worker → engine RPC"
         raise RuntimeError(msg)
+    if http_url and not rpc_token:
+        msg = (
+            "HYPERBUS_RPC_TOKEN is required when using HTTP engine transport "
+            "(HYPERBUS_ENGINE_URL)"
+        )
+        raise RuntimeError(msg)
     _ = tenant_id, agent_id
-    return _RpcTransportClient(http_url=http_url, socket_path=socket_path)
+    return _RpcTransportClient(
+        http_url=http_url,
+        socket_path=socket_path,
+        rpc_token=rpc_token,
+    )

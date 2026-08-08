@@ -1,11 +1,16 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
-COPY src ./src
-RUN pip install --no-cache-dir '.[postgres]'
 
-COPY examples/docker-compose/acme-grants.yaml /etc/hyperbus/grants.yaml
+# Monorepo build context (../../.. from examples/docker-compose) provides siblings.
+COPY hyperbus-core /deps/hyperbus-core
+COPY hyperbus-langgraph /deps/hyperbus-langgraph
+COPY hyperbus-runtime/pyproject.toml hyperbus-runtime/README.md ./
+COPY hyperbus-runtime/src ./src
+COPY hyperbus-runtime/examples/docker-compose/acme-grants.yaml /etc/hyperbus/grants.yaml
+
+RUN pip install --no-cache-dir /deps/hyperbus-core /deps/hyperbus-langgraph \
+    && pip install --no-cache-dir '.[postgres]'
 
 EXPOSE 8080
-CMD ["hyperbus-engine", "--tenant", "acme", "--grants", "/etc/hyperbus/grants.yaml", "--listen", "0.0.0.0:8080"]
+CMD ["hyperbus-engine", "--tenant", "acme", "--grants", "/etc/hyperbus/grants.yaml", "--socket", "", "--listen", "0.0.0.0:8080"]
