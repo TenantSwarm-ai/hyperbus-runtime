@@ -31,7 +31,9 @@ def encode(value: Any) -> Any:
         return value
     if isinstance(value, bytes):
         return {"__type__": "bytes", "data": base64.b64encode(value).decode("ascii")}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, tuple):
+        return {"__type__": "tuple", "items": [encode(item) for item in value]}
+    if isinstance(value, list):
         return [encode(item) for item in value]
     if isinstance(value, dict):
         return {str(key): encode(item) for key, item in value.items()}
@@ -52,6 +54,8 @@ def decode(value: Any) -> Any:
     type_name = value.get("__type__")
     if type_name == "bytes":
         return base64.b64decode(value["data"])
+    if type_name == "tuple":
+        return tuple(decode(item) for item in value["items"])
     if type_name in _DATACLASS_TYPES:
         cls = _DATACLASS_TYPES[type_name]
         kwargs = {

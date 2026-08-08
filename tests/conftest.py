@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 import socket
-import threading
 from collections.abc import Iterator
 
 import pytest
-from hyperbus_core import HyperBusEngine, InMemoryBackend, Permission
+from hyperbus_core import HyperBusEngine, InMemoryBackend
 
+from hyperbus_runtime import shared
 from hyperbus_runtime.grants import load_grants_yaml
 from hyperbus_runtime.rpc_server import HttpRpcServer
+import hyperbus_runtime.worker as worker_module
+
+
+@pytest.fixture(autouse=True)
+def reset_runtime_globals() -> Iterator[None]:
+    worker_module._bound = None
+    worker_module._client = None
+    shared._bound_context = None
+    shared._group_stores.clear()
+    shared._audit_events.clear()
+    yield
+    worker_module._bound = None
+    worker_module._client = None
+    shared._bound_context = None
+    shared._group_stores.clear()
+    shared._audit_events.clear()
 
 
 @pytest.fixture
