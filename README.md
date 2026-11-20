@@ -79,6 +79,8 @@ hyperbus-worker python /app/support/graph.py
 
 With `DATABASE_URL` set, grant changes are audited in Postgres, and the engine rebuilds its grants from that log on boot. The YAML file only seeds regions the log has never decided, so a grant revoked at runtime stays revoked after a restart. Verified identity mode with a durable log also needs `--audit-checkpoint`, which is written once with `python -m hyperbus_runtime.audit_checkpoint` (spec 003 AC-6.6).
 
+Verified identity over HTTP needs TLS. Start the engine with `--listen`, `--tls-cert`, and `--tls-key` (or `HYPERBUS_TLS_CERT` and `HYPERBUS_TLS_KEY`). Plaintext HTTP is refused in verified mode. Workers reach an `https://` engine URL with `HYPERBUS_TLS_CA` set to the engine's CA, and a worker never sends `HYPERBUS_IDENTITY_TOKEN` over `http://`. Client certificates (mTLS) are not supported yet.
+
 Docker Compose example: [`examples/docker-compose/`](examples/docker-compose/).
 
 ## What this repo does not claim

@@ -6,6 +6,7 @@ import argparse
 import os
 import signal
 import socket
+import ssl
 import sys
 import threading
 from pathlib import Path
@@ -25,6 +26,7 @@ from hyperbus_runtime.identity_map import IdentityMapError
 from hyperbus_runtime.identity_verify import JwksError
 from hyperbus_runtime.peer_cred import load_peer_agent_map
 from hyperbus_runtime.rpc_server import HttpRpcServer, UnixRpcServer
+from hyperbus_runtime.tls import load_server_ssl_context
 
 _DEFAULT_UNIX_SOCKET = "/run/hyperbus/engine.sock"
 
@@ -43,6 +45,20 @@ def default_socket_path() -> str | None:
     return None
 
 
+def _build_listener_tls(cert: Path | None, key: Path | None) -> ssl.SSLContext | None:
+    """Load the HTTP listener's TLS context, or ``None`` when TLS is not configured."""
+    if cert is None and key is None:
+        return None
+    if cert is None or key is None:
+        msg = "--tls-cert and --tls-key must be set together"
+        raise IdentityConfigError(msg)
+    try:
+        return load_server_ssl_context(cert_path=cert, key_path=key)
+    except (OSError, ssl.SSLError) as exc:
+        msg = f"cannot load TLS certificate or key: {exc}"
+        raise IdentityConfigError(msg) from exc
+
+
 def validate_identity_startup(
     *,
     mode: str,
@@ -52,14 +68,18 @@ def validate_identity_startup(
     durable_audit: bool,
     allow_volatile_grants: bool,
     audit_checkpoint_given: bool,
+    tls_configured: bool = False,
 ) -> None:
     """Refuse verified-mode configurations this build cannot enforce (spec 003)."""
+    if tls_configured and not listen:
+        msg = "--tls-cert and --tls-key apply to --listen only"
+        raise IdentityConfigError(msg)
     if mode == "declared":
         return
-    if listen:
+    if listen and not tls_configured:
         msg = (
-            "verified identity over HTTP requires TLS (001 AC-7.1), which this build "
-            "does not provide; serve verified mode on --socket only"
+            "verified identity over HTTP requires TLS (001 AC-7.1): pass --tls-cert "
+            "and --tls-key, or serve verified mode on --socket only"
         )
         raise IdentityConfigError(msg)
     if peer_agent_map_path is not None:
@@ -106,6 +126,7 @@ def serve_engine(
     rpc_token: str | None = None,
     socket_group: str | None = None,
     gate: IdentityGate | None = None,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> None:
     peer_agent_map = load_peer_agent_map(peer_agent_map_path)
     if listen and not rpc_token:
@@ -124,12 +145,13 @@ def serve_engine(
             audit=audit,
             rpc_token=rpc_token,
             gate=gate,
+            ssl_context=ssl_context,
         )
         http.start()
         servers.append(http)
         bound_host, bound_port = http.address
         print(
-            f"hyperbus-engine listening on http://{bound_host}:{bound_port}/rpc",
+            f"hyperbus-engine listening on {http.scheme}://{bound_host}:{bound_port}/rpc",
             file=sys.stderr,
         )
     if socket_path:
@@ -198,6 +220,18 @@ def main() -> None:
         help="Optional HTTP listen address host:port (Docker fallback)",
     )
     parser.add_argument(
+        "--tls-cert",
+        type=Path,
+        default=os.environ.get("HYPERBUS_TLS_CERT"),
+        help="PEM certificate for the HTTP listener; required with --listen in verified mode",
+    )
+    parser.add_argument(
+        "--tls-key",
+        type=Path,
+        default=os.environ.get("HYPERBUS_TLS_KEY"),
+        help="PEM private key for --tls-cert",
+    )
+    parser.add_argument(
         "--database-url",
         default=None,
         help="Postgres URL (or set DATABASE_URL)",
@@ -253,7 +287,9 @@ def main() -> None:
             durable_audit=bool(database_url),
             allow_volatile_grants=args.allow_volatile_grants,
             audit_checkpoint_given=args.audit_checkpoint is not None,
+            tls_configured=args.tls_cert is not None or args.tls_key is not None,
         )
+        ssl_context = _build_listener_tls(args.tls_cert, args.tls_key)
         checkpoint = (
             load_audit_checkpoint(args.audit_checkpoint, tenant_id=args.tenant)
             if args.audit_checkpoint is not None
@@ -294,6 +330,7 @@ def main() -> None:
         rpc_token=args.rpc_token,
         socket_group=args.socket_group,
         gate=gate,
+        ssl_context=ssl_context,
     )
 
 

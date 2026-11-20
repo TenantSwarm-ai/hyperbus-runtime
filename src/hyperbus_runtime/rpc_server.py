@@ -7,7 +7,9 @@ import json
 import os
 import socket
 import socketserver
+import ssl
 import stat
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -18,7 +20,6 @@ from hyperbus_runtime.identity_gate import IdentityConfigError, IdentityGate
 from hyperbus_runtime.identity_map import IdentityDenied
 from hyperbus_runtime.peer_cred import (
     PeerIdentity,
-    load_peer_agent_map,
     read_peer_identity,
     resolve_agent_id,
 )
@@ -59,12 +60,24 @@ def _peer_cert(conn: socket.socket) -> dict[str, Any] | None:
     return cert if isinstance(cert, dict) else None
 
 
+_HANDSHAKE_TIMEOUT_S = 10.0
+
+
 class RpcHttpHandler(BaseHTTPRequestHandler):
     engine: HyperBusEngine
     tenant_id: str
     audit: AuditSink | None
     rpc_token: str | None
     gate: IdentityGate | None = None
+
+    def setup(self) -> None:
+        # The TLS handshake runs here, in this connection's thread, under a
+        # timeout, so a stalled client cannot hold the accept loop.
+        if isinstance(self.request, ssl.SSLSocket):
+            self.request.settimeout(_HANDSHAKE_TIMEOUT_S)
+            self.request.do_handshake()
+            self.request.settimeout(None)
+        super().setup()
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         return
@@ -257,8 +270,37 @@ class UnixRpcServer:
             os.unlink(self._socket_path)
 
 
+class _TlsThreadingHTTPServer(ThreadingHTTPServer):
+    """Wraps each accepted socket in TLS. The handshake runs later, in the handler thread."""
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler_class: type[BaseHTTPRequestHandler],
+        ssl_context: ssl.SSLContext,
+    ) -> None:
+        self._ssl_context = ssl_context
+        super().__init__(server_address, handler_class)
+
+    def get_request(self) -> tuple[socket.socket, Any]:
+        sock, addr = super().get_request()
+        tls_sock = self._ssl_context.wrap_socket(
+            sock,
+            server_side=True,
+            do_handshake_on_connect=False,
+        )
+        return tls_sock, addr
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ssl.SSLError, ConnectionError, TimeoutError)):
+            # A failed or abandoned handshake is a client problem, not a server fault.
+            return
+        super().handle_error(request, client_address)
+
+
 class HttpRpcServer:
-    """Threaded HTTP server exposing POST /rpc."""
+    """Threaded HTTP server exposing POST /rpc, over TLS when ``ssl_context`` is given."""
 
     def __init__(
         self,
@@ -270,12 +312,14 @@ class HttpRpcServer:
         audit: AuditSink | None = None,
         rpc_token: str | None = None,
         gate: IdentityGate | None = None,
-        transport_secure: bool = False,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
-        if gate is not None and not transport_secure:
+        # Transport security is established here, by this server, not asserted by
+        # the caller. Verified identity over plaintext HTTP is refused (AC-1.4).
+        if gate is not None and ssl_context is None:
             msg = (
                 "verified identity over HTTP requires TLS (001 AC-7.1); "
-                "this build has no TLS listener"
+                "pass --tls-cert and --tls-key to serve over HTTPS"
             )
             raise IdentityConfigError(msg)
         handler = type(
@@ -289,7 +333,13 @@ class HttpRpcServer:
                 "gate": gate,
             },
         )
-        self._httpd = ThreadingHTTPServer((host, port), handler)
+        self.scheme = "https" if ssl_context is not None else "http"
+        if ssl_context is not None:
+            self._httpd: ThreadingHTTPServer = _TlsThreadingHTTPServer(
+                (host, port), handler, ssl_context
+            )
+        else:
+            self._httpd = ThreadingHTTPServer((host, port), handler)
         self._thread: threading.Thread | None = None
 
     @property

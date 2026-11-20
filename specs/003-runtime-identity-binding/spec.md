@@ -163,7 +163,7 @@ Map rules are in AC-3.x below. A `jwt` identity must name an `issuer` declared u
 
 ## 8. Dependencies
 
-- **001 AC-7.1 (TLS / mTLS).** `src/hyperbus_runtime/tls.py` exists in the primary checkout as uncommitted work and is not on `main`. `verified` HTTP (AC-1.4) depends on it landing first.
+- **001 AC-7.1 (TLS).** This branch adds `src/hyperbus_runtime/tls.py`: server TLS on the listener, and a client that trusts only `HYPERBUS_TLS_CA`. It is not on `main`. The primary checkout has an uncommitted `tls.py` with the same function names and a different body (it turns hostname checking off when a CA is set, and it has no TLS 1.2 floor). Reconcile the two before merge. Keep this branch's version. `--tls-client-ca` (mTLS) is not implemented here.
 - **001 AC-7.2 (admin port).** Admin mutations become durable through US-6.
 - **001 AC-7.3 (IPC benchmark).** `src/hyperbus_runtime/bench_ipc.py` is also uncommitted in the primary checkout. AC-8.1 uses it.
 - **hyperbus-core.** Durable audit (`PostgresAuditStore`, spec 009). The tenant-wide grant replay API (AC-6.4) is implemented in `specs/014-tenant-grant-replay` (commit `229ea88`). The runtime consumes that commit through `PYTHONPATH` or a local install. No released hyperbus-core version contains it yet, so the `hyperbus-core` pin in `pyproject.toml` must be raised before a release.
@@ -223,7 +223,7 @@ Status as of this branch. "Implemented" means code exists and tests exercise it.
 | JWT verification (AC-4.1, AC-4.2, AC-4.4) | Implemented | `tests/test_identity_verify.py`. Algorithm is checked before key lookup. The request path does no network I/O |
 | SPIFFE SAN, trust-domain, and validity checks (AC-4.3) | Implemented for the peer certificate dict | Chain verification against the trust bundle belongs to the TLS layer, which this build lacks |
 | Bearer and certificate credentials on HTTP (AC-1.1, AC-1.2, AC-1.3) | Implemented, exercised under an asserted secure transport | `tests/test_identity_startup.py`. The shared transport token alone does not authenticate |
-| HTTP over TLS (AC-1.4, 001 AC-7.1) | Not implemented | Verified mode refuses any HTTP listener at startup (`validate_identity_startup`, `HttpRpcServer`) |
+| HTTP over TLS (AC-1.4, 001 AC-7.1) | Implemented | `HttpRpcServer(ssl_context=...)` wraps its own sockets, and the handshake runs in the handler thread under a 10 s timeout. Verified mode refuses a plaintext listener and a `--tls-*` flag without `--listen`. `HttpRpcServer` refuses a gate without TLS. The client refuses to send `HYPERBUS_IDENTITY_TOKEN` over `http://` and needs `HYPERBUS_TLS_CA` for `https://`. `tests/test_tls.py`, `tests/test_identity_startup.py` |
 | Client presents an mTLS certificate (AC-1.5) | Not implemented | The client sends a bearer only, from `identity_token` or `HYPERBUS_IDENTITY_TOKEN` |
 | Audit: `identity.denied`, `identity.map_loaded`, `identity.map_rejected` (AC-5.1, AC-5.2) | Implemented | Audit `identity` is null before verification (AC-5.1) |
 | No token or key material in audit (AC-5.4) | Partly verified | Asserted for the verified bearer path only. No full log or PEM scan yet |

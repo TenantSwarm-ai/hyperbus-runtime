@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ssl
 import urllib.error
 import urllib.request
 from typing import Any, Protocol
@@ -12,6 +13,7 @@ from typing import Any, Protocol
 from hyperbus_core import CapabilityError, TenantIsolationError
 
 from hyperbus_runtime.rpc_codec import decode, encode
+from hyperbus_runtime.tls import load_client_ssl_context
 
 
 class EngineClient(Protocol):
@@ -38,6 +40,7 @@ class _RpcTransportClient:
         timeout: float = 30.0,
         rpc_token: str | None = None,
         identity_token: str | None = None,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         if not http_url and not socket_path:
             msg = "Engine client requires http_url or socket_path"
@@ -58,6 +61,19 @@ class _RpcTransportClient:
             if identity_token is not None
             else os.environ.get("HYPERBUS_IDENTITY_TOKEN")
         )
+        self._ssl_context = ssl_context
+        if self._http_url is not None:
+            # Fail closed: a bearer never goes out in plaintext, and an https
+            # engine is never reached through the system trust store (AC-1.4).
+            if self._http_url.startswith("http://") and self._identity_token:
+                msg = (
+                    "HYPERBUS_IDENTITY_TOKEN must not be sent over plaintext HTTP; "
+                    "use an https:// engine URL"
+                )
+                raise ValueError(msg)
+            if self._http_url.startswith("https://") and ssl_context is None:
+                msg = "an https:// engine URL requires an ssl_context that trusts the engine CA"
+                raise ValueError(msg)
 
     def call(
         self,
@@ -102,7 +118,11 @@ class _RpcTransportClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=self._timeout,
+                context=self._ssl_context,
+            ) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -153,9 +173,24 @@ def connect_from_env(*, tenant_id: str, agent_id: str) -> EngineClient:
             "(HYPERBUS_ENGINE_URL)"
         )
         raise RuntimeError(msg)
+    ssl_context = None
+    if http_url and http_url.startswith("https://"):
+        ca_path = os.environ.get("HYPERBUS_TLS_CA")
+        if not ca_path:
+            msg = (
+                "HYPERBUS_TLS_CA is required when using an https:// engine URL "
+                "(HYPERBUS_ENGINE_URL)"
+            )
+            raise RuntimeError(msg)
+        try:
+            ssl_context = load_client_ssl_context(ca_path=ca_path)
+        except OSError as exc:
+            msg = f"cannot load HYPERBUS_TLS_CA: {exc}"
+            raise RuntimeError(msg) from exc
     _ = tenant_id, agent_id
     return _RpcTransportClient(
         http_url=http_url,
         socket_path=socket_path,
         rpc_token=rpc_token,
+        ssl_context=ssl_context,
     )
