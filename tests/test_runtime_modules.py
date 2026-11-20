@@ -11,7 +11,7 @@ import pytest
 from hyperbus_core import HyperBusEngine, InMemoryAuditStore, InMemoryBackend
 
 from hyperbus_runtime.client import _RpcTransportClient
-from hyperbus_runtime.engine_daemon import _build_backend
+from hyperbus_runtime.engine_boot import build_backend
 from hyperbus_runtime.rpc_server import HttpRpcServer
 from hyperbus_runtime.grants import load_grants_yaml
 from hyperbus_runtime.remote_engine import RemoteHyperBusEngine
@@ -83,14 +83,14 @@ def test_unix_rpc_server_roundtrip(grants_file) -> None:
 
 
 def test_build_backend_in_memory() -> None:
-    backend = _build_backend(None)
+    backend = build_backend(None)
     assert isinstance(backend, InMemoryBackend)
 
 
 def test_build_backend_postgres_missing() -> None:
-    with patch("hyperbus_runtime.engine_daemon.PostgresBackend", None):
+    with patch("hyperbus_runtime.engine_boot.PostgresBackend", None):
         with pytest.raises(RuntimeError, match="Postgres backend requested"):
-            _build_backend("postgresql://example")
+            build_backend("postgresql://example")
 
 
 def test_shared_namespace_requires_bind() -> None:

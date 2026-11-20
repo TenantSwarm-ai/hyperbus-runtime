@@ -21,10 +21,12 @@ from hyperbus_core import (
 )
 from hyperbus_core.audit_chain import GENESIS_HASH
 
-from hyperbus_runtime import engine_daemon
+from hyperbus_runtime import engine_boot
 from hyperbus_runtime.audit_checkpoint import load_audit_checkpoint, write_audit_checkpoint
 from hyperbus_runtime.audit_checkpoint import main as audit_checkpoint_main
-from hyperbus_runtime.engine_daemon import create_engine
+from hyperbus_runtime.config import WorkerContext
+from hyperbus_runtime.engine_boot import create_engine
+from hyperbus_runtime.perf import create_local_engine
 
 TENANT = "acme"
 
@@ -42,7 +44,7 @@ def _grants_file(directory: Path, *, tenant: str = TENANT) -> Path:
 def shared_audit(monkeypatch: pytest.MonkeyPatch) -> InMemoryAuditStore:
     """One log that survives restarts. ``create_engine`` builds a store per boot."""
     store = InMemoryAuditStore()
-    monkeypatch.setattr(engine_daemon, "_build_audit_store", lambda database_url: store)
+    monkeypatch.setattr(engine_boot, "build_audit_store", lambda database_url: store)
     return store
 
 
@@ -132,9 +134,65 @@ def test_tail_deletion_is_accepted_without_a_checkpoint(
 
 
 def test_audit_store_follows_the_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert isinstance(engine_daemon._build_audit_store(None), InMemoryAuditStore)
-    durable = engine_daemon._build_audit_store("postgresql://127.0.0.1:1/unused")
+    assert isinstance(engine_boot.build_audit_store(None), InMemoryAuditStore)
+    durable = engine_boot.build_audit_store("postgresql://127.0.0.1:1/unused")
     assert isinstance(durable, PostgresAuditStore)
+
+
+def _perf_ctx() -> WorkerContext:
+    return WorkerContext(tenant_id=TENANT, agent_id="support-bot", profile="perf")
+
+
+@pytest.fixture
+def perf_grants(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    grants = _grants_file(tmp_path)
+    monkeypatch.setenv("HB_GRANTS_FILE", str(grants))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("HYPERBUS_AUDIT_CHECKPOINT", raising=False)
+    return grants
+
+
+def test_perf_profile_keeps_a_revoke_across_restart(
+    shared_audit: InMemoryAuditStore, perf_grants: Path
+) -> None:
+    create_local_engine(_perf_ctx())
+    _operator_revoke(shared_audit, "support-bot", "support")
+
+    restarted = create_local_engine(_perf_ctx())
+
+    _assert_denied(restarted, "support-bot", "support")
+    seeds = [e for e in shared_audit.events if e.event_type == "grant.created"]
+    assert len(seeds) == 1, "a perf restart must not append the seed again"
+
+
+def test_perf_denial_is_audited_and_restart_still_boots(
+    shared_audit: InMemoryAuditStore, perf_grants: Path
+) -> None:
+    """The perf engine audits denials, like the sidecar. Replay ignores them."""
+    engine_obj = create_local_engine(_perf_ctx())
+    _assert_denied(engine_obj, "support-bot", "billing")  # no grant on this region
+
+    assert any(e.event_type == "access.denied" for e in shared_audit.events)
+    restarted = create_local_engine(_perf_ctx())
+    assert restarted.get("t1", "c1", region="support", agent_id="support-bot") is None
+    _assert_denied(restarted, "support-bot", "billing")
+
+
+def test_perf_profile_honours_the_audit_checkpoint(
+    shared_audit: InMemoryAuditStore,
+    perf_grants: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    create_local_engine(_perf_ctx())
+    _operator_revoke(shared_audit, "support-bot", "support")
+    checkpoint_path = tmp_path / "tip.yaml"
+    write_audit_checkpoint(checkpoint_path, shared_audit, tenant_id=TENANT)
+    shared_audit.events.pop()  # the checkpointed revoke disappears from the tail
+    monkeypatch.setenv("HYPERBUS_AUDIT_CHECKPOINT", str(checkpoint_path))
+
+    with pytest.raises(AuditIntegrityError, match="past the log tip"):
+        create_local_engine(_perf_ctx())
 
 
 def test_write_then_load_checkpoint_round_trips(tmp_path: Path) -> None:

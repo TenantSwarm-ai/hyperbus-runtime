@@ -190,7 +190,11 @@ class TestWorkerContainment:
         worker_sources = (REPO_ROOT / "src" / "hyperbus_runtime").glob("*.py")
         forbidden = ("PostgresBackend", "postgres", "psycopg")
         for path in worker_sources:
-            if path.name in {"engine_daemon.py", "perf.py"}:
+            # engine_boot constructs backends. Only the sidecar and the explicitly
+            # weaker in-process perf profile may reference them. worker.py imports
+            # perf, so the worker process loads engine_boot, as it already loaded
+            # PostgresBackend through perf before this module existed.
+            if path.name in {"engine_daemon.py", "engine_boot.py", "perf.py"}:
                 continue
             text = path.read_text(encoding="utf-8")
             for token in forbidden:
