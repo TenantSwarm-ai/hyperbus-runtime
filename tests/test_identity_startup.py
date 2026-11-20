@@ -36,6 +36,7 @@ def _startup(**overrides: Any) -> dict[str, Any]:
         "identity_map_path": Path("/etc/hyperbus/identity.yaml"),
         "durable_audit": True,
         "allow_volatile_grants": False,
+        "audit_checkpoint_given": True,
     }
     values.update(overrides)
     return values
@@ -81,6 +82,17 @@ def test_volatile_grants_dev_flag_allows_verified_mode_without_durable_audit() -
 
 def test_verified_unix_socket_with_durable_audit_is_accepted() -> None:
     validate_identity_startup(**_startup())
+
+
+def test_verified_durable_audit_requires_an_audit_checkpoint() -> None:
+    with pytest.raises(IdentityConfigError, match="--audit-checkpoint"):
+        validate_identity_startup(**_startup(audit_checkpoint_given=False))
+
+
+def test_volatile_dev_path_needs_no_audit_checkpoint() -> None:
+    validate_identity_startup(
+        **_startup(durable_audit=False, allow_volatile_grants=True, audit_checkpoint_given=False)
+    )
 
 
 # --- HTTP transport refuses verified identity without TLS ----------------

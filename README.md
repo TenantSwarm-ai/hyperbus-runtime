@@ -77,6 +77,8 @@ export HYPERBUS_SOCKET=/run/hyperbus/acme.sock
 hyperbus-worker python /app/support/graph.py
 ```
 
+With `DATABASE_URL` set, grant changes are audited in Postgres, and the engine rebuilds its grants from that log on boot. The YAML file only seeds regions the log has never decided, so a grant revoked at runtime stays revoked after a restart. Verified identity mode with a durable log also needs `--audit-checkpoint`, which is written once with `python -m hyperbus_runtime.audit_checkpoint` (spec 003 AC-6.6).
+
 Docker Compose example: [`examples/docker-compose/`](examples/docker-compose/).
 
 ## What this repo does not claim

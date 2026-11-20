@@ -24,13 +24,20 @@ def _parse_permission(raw: str) -> Permission:
         raise ValueError(msg) from exc
 
 
-def load_grants_yaml(
+GrantSeed = dict[str, dict[str, Permission]]
+
+
+def load_grants_seed(
     path: str | Path,
     *,
     tenant_id: str | None = None,
-    audit: AuditSink | None = None,
-) -> CapabilityRegistry:
-    """Build a tenant-scoped registry from a grants YAML file."""
+) -> tuple[str, GrantSeed]:
+    """Parse a grants YAML into ``(tenant_id, {agent_id: {region: Permission}})``.
+
+    Nothing is applied and nothing is audited. The boot path passes the seed to
+    ``rebuild_registry``, which applies only regions the audit log has never
+    decided (spec 014).
+    """
     raw: dict[str, Any] = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     file_tenant = raw.get("tenant_id")
     resolved_tenant = tenant_id or file_tenant
@@ -41,12 +48,33 @@ def load_grants_yaml(
         msg = f"grants tenant {file_tenant!r} != engine tenant {tenant_id!r}"
         raise ValueError(msg)
 
-    registry = CapabilityRegistry(tenant_id=resolved_tenant, audit=audit)
+    seed: GrantSeed = {}
     grants = raw.get("grants") or {}
     for agent_id, regions in grants.items():
         if not isinstance(regions, dict):
             msg = f"grants for {agent_id!r} must be a region map"
             raise ValueError(msg)
-        for region, permission_name in regions.items():
-            registry.grant(agent_id, region, _parse_permission(str(permission_name)))
+        seed[agent_id] = {
+            region: _parse_permission(str(permission_name))
+            for region, permission_name in regions.items()
+        }
+    return resolved_tenant, seed
+
+
+def load_grants_yaml(
+    path: str | Path,
+    *,
+    tenant_id: str | None = None,
+    audit: AuditSink | None = None,
+) -> CapabilityRegistry:
+    """Build a tenant-scoped registry from a grants YAML file.
+
+    This applies every entry as a fresh ``grant`` (and audits it). It is for
+    volatile, in-process use. The durable boot path uses ``load_grants_seed``.
+    """
+    resolved_tenant, seed = load_grants_seed(path, tenant_id=tenant_id)
+    registry = CapabilityRegistry(tenant_id=resolved_tenant, audit=audit)
+    for agent_id, regions in seed.items():
+        for region, permission in regions.items():
+            registry.grant(agent_id, region, permission)
     return registry

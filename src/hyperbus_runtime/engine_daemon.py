@@ -10,9 +10,20 @@ import sys
 import threading
 from pathlib import Path
 
-from hyperbus_core import HyperBusEngine, InMemoryAuditStore, InMemoryBackend
+from hyperbus_core import (
+    AuditConflictError,
+    AuditDurabilityError,
+    AuditIntegrityError,
+    CapabilityError,
+    HyperBusEngine,
+    InMemoryAuditStore,
+    InMemoryBackend,
+    PostgresAuditStore,
+    rebuild_registry,
+)
 
-from hyperbus_runtime.grants import load_grants_yaml
+from hyperbus_runtime.audit_checkpoint import load_audit_checkpoint
+from hyperbus_runtime.grants import load_grants_seed
 from hyperbus_runtime.identity_gate import IdentityConfigError, IdentityGate
 from hyperbus_runtime.identity_map import IdentityMapError
 from hyperbus_runtime.identity_verify import JwksError
@@ -25,6 +36,9 @@ except ImportError:  # pragma: no cover - optional extra
     PostgresBackend = None  # type: ignore[misc, assignment]
 
 _DEFAULT_UNIX_SOCKET = "/run/hyperbus/engine.sock"
+
+AuditStore = InMemoryAuditStore | PostgresAuditStore
+_SEED_SOURCE = "grants-yaml"
 
 
 def _build_backend(database_url: str | None):
@@ -50,16 +64,37 @@ def default_socket_path() -> str | None:
     return None
 
 
+def _build_audit_store(database_url: str | None) -> AuditStore:
+    """Durable grant audit when a database is configured, volatile otherwise (AC-6.1, AC-6.3)."""
+    if database_url:
+        return PostgresAuditStore(database_url)
+    return InMemoryAuditStore()
+
+
 def create_engine(
     *,
     tenant_id: str,
     grants_path: Path,
     database_url: str | None,
-) -> tuple[HyperBusEngine, InMemoryAuditStore]:
-    audit = InMemoryAuditStore()
-    registry = load_grants_yaml(grants_path, tenant_id=tenant_id, audit=audit)
+    audit_checkpoint: tuple[int, str] | None = None,
+) -> tuple[HyperBusEngine, AuditStore]:
+    """Rebuild the tenant's grants from its audit log, then build the engine.
+
+    The YAML seed fills only regions the log has never decided (AC-6.2). A
+    revoked grant therefore stays revoked after restart. Any integrity failure
+    raises before an engine exists, so the process does not start (spec 014 AC-14.6).
+    """
+    audit = _build_audit_store(database_url)
+    _, seed = load_grants_seed(grants_path, tenant_id=tenant_id)
+    rebuilt = rebuild_registry(
+        audit,
+        tenant_id,
+        seed=seed,
+        seed_source=_SEED_SOURCE,
+        checkpoint=audit_checkpoint,
+    )
     backend = _build_backend(database_url)
-    engine = HyperBusEngine(tenant_id, backend, registry, audit=audit)
+    engine = HyperBusEngine(tenant_id, backend, rebuilt.registry, audit=audit)
     return engine, audit
 
 
@@ -71,6 +106,7 @@ def validate_identity_startup(
     identity_map_path: Path | None,
     durable_audit: bool,
     allow_volatile_grants: bool,
+    audit_checkpoint_given: bool,
 ) -> None:
     """Refuse verified-mode configurations this build cannot enforce (spec 003)."""
     if mode == "declared":
@@ -93,6 +129,12 @@ def validate_identity_startup(
             "pass --allow-volatile-grants only for local development"
         )
         raise IdentityConfigError(msg)
+    if durable_audit and not audit_checkpoint_given:
+        msg = (
+            "verified mode with durable grant audit requires --audit-checkpoint "
+            "(spec 003 AC-6.6); create one with `python -m hyperbus_runtime.audit_checkpoint`"
+        )
+        raise IdentityConfigError(msg)
 
 
 def _reload_on_signal(
@@ -110,7 +152,7 @@ def _reload_on_signal(
 
 def serve_engine(
     engine: HyperBusEngine,
-    audit: InMemoryAuditStore,
+    audit: AuditStore,
     *,
     tenant_id: str,
     socket_path: str | None,
@@ -249,21 +291,34 @@ def main() -> None:
         action="store_true",
         help="Dev only: allow verified mode without durable grant audit",
     )
+    parser.add_argument(
+        "--audit-checkpoint",
+        type=Path,
+        default=os.environ.get("HYPERBUS_AUDIT_CHECKPOINT"),
+        help="Operator-held audit tip; required in verified mode with a durable log",
+    )
     args = parser.parse_args()
     database_url = args.database_url or os.environ.get("DATABASE_URL")
-    engine, audit = create_engine(
-        tenant_id=args.tenant,
-        grants_path=args.grants,
-        database_url=database_url,
-    )
     try:
         validate_identity_startup(
             mode=args.identity_mode,
             listen=args.listen,
             peer_agent_map_path=args.peer_agent_map,
             identity_map_path=args.identity_map,
-            durable_audit=not isinstance(audit, InMemoryAuditStore),
+            durable_audit=bool(database_url),
             allow_volatile_grants=args.allow_volatile_grants,
+            audit_checkpoint_given=args.audit_checkpoint is not None,
+        )
+        checkpoint = (
+            load_audit_checkpoint(args.audit_checkpoint, tenant_id=args.tenant)
+            if args.audit_checkpoint is not None
+            else None
+        )
+        engine, audit = create_engine(
+            tenant_id=args.tenant,
+            grants_path=args.grants,
+            database_url=database_url,
+            audit_checkpoint=checkpoint,
         )
         gate = None
         if args.identity_mode == "verified":
@@ -273,7 +328,16 @@ def main() -> None:
                 audit=audit,
             )
             gate.start()
-    except (IdentityConfigError, IdentityMapError, JwksError) as exc:
+    except (
+        IdentityConfigError,
+        IdentityMapError,
+        JwksError,
+        AuditIntegrityError,
+        AuditConflictError,
+        AuditDurabilityError,
+        CapabilityError,
+        ValueError,
+    ) as exc:
         sys.exit(f"hyperbus-engine: {exc}")
     serve_engine(
         engine,
