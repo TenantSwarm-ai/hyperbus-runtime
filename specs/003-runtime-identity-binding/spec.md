@@ -146,7 +146,8 @@ Map rules are in AC-3.x below. A `jwt` identity must name an `issuer` declared u
 - **AC-6.1:** Grant mutations and revocations are written to durable audit. On boot the engine rebuilds its registry from the durable audit log. YAML supplies only grants that the audit log has no decision for.
 - **AC-6.2:** A grant revoked in audit stays revoked after restart, even if the YAML still lists it.
 - **AC-6.3:** `verified` mode refuses to start with `InMemoryAuditStore`. A dev-only `--allow-volatile-grants` flag overrides this and logs a warning.
-- **AC-6.4 (core dependency):** Rebuilding from the whole tenant's audit log needs a tenant-wide replay API in `hyperbus-core`. Core has per-agent `grants_at` today. The runtime does not reimplement replay (VII.1). The replay API needs its own core spec.
+- **AC-6.4 (core dependency):** Rebuilding from the whole tenant's audit log needs a tenant-wide replay API in `hyperbus-core`. Core has per-agent `grants_at` today. The runtime does not reimplement replay (VII.1). The API is specified in hyperbus-core `specs/014-tenant-grant-replay` (Draft): `replay_tenant_grants` and `rebuild_registry`.
+- **AC-6.5 (boot guard):** Until `rebuild_registry` exists, `create_engine` must not run with a durable audit store. Today it re-applies the YAML on every boot, which appends a new `grant.created` after any revoke. A durable store would then bring a revoked grant back as effective (reproduced on hyperbus-core `main`).
 
 ### US-7: Boundary and self-hosting
 
@@ -164,7 +165,7 @@ Map rules are in AC-3.x below. A `jwt` identity must name an `issuer` declared u
 - **001 AC-7.1 (TLS / mTLS).** `src/hyperbus_runtime/tls.py` exists in the primary checkout as uncommitted work and is not on `main`. `verified` HTTP (AC-1.4) depends on it landing first.
 - **001 AC-7.2 (admin port).** Admin mutations become durable through US-6.
 - **001 AC-7.3 (IPC benchmark).** `src/hyperbus_runtime/bench_ipc.py` is also uncommitted in the primary checkout. AC-8.1 uses it.
-- **hyperbus-core.** Durable audit (`PostgresAuditStore`, spec 009). A tenant-wide grant replay API (AC-6.4) is new and needs a core spec.
+- **hyperbus-core.** Durable audit (`PostgresAuditStore`, spec 009). A tenant-wide grant replay API (AC-6.4) is specified in `specs/014-tenant-grant-replay` (Draft, not implemented).
 - **Uncommitted primary work.** `rpc_server.py`, `client.py`, `engine_daemon.py`, and `worker.py` have uncommitted changes in the primary checkout. Implementation rebases onto them when they merge.
 
 ## 9. Verification
@@ -225,7 +226,7 @@ Status as of this branch. "Implemented" means code exists and tests exercise it.
 | Client presents an mTLS certificate (AC-1.5) | Not implemented | The client sends a bearer only, from `identity_token` or `HYPERBUS_IDENTITY_TOKEN` |
 | Audit: `identity.denied`, `identity.map_loaded`, `identity.map_rejected` (AC-5.1, AC-5.2) | Implemented | Audit `identity` is null before verification (AC-5.1) |
 | No token or key material in audit (AC-5.4) | Partly verified | Asserted for the verified bearer path only. No full log or PEM scan yet |
-| Durable grant state and replay (AC-6.1, AC-6.2, AC-6.4) | Not implemented | Needs the core tenant-wide replay API (AC-6.4). The runtime does not reimplement it |
+| Durable grant state and replay (AC-6.1, AC-6.2, AC-6.4, AC-6.5) | Not implemented. Blocked on core | The API is specified in hyperbus-core `specs/014-tenant-grant-replay` (Draft). Until it lands, the boot path must not use a durable store (AC-6.5) |
 | Refuse volatile audit in verified mode (AC-6.3) | Implemented, with a consequence | `validate_identity_startup` refuses `InMemoryAuditStore` unless `--allow-volatile-grants` is set. `create_engine` always builds an `InMemoryAuditStore` today, so verified mode needs the dev flag to start |
 | No hosted calls (AC-7.1) | Met by design | The only network fetch is the customer's `jwks_url` |
 | CI check against hosted-package imports (AC-7.2) | Not implemented | No CI rule added |
