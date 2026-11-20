@@ -158,8 +158,100 @@ def make_tls_pair(directory: Path) -> tuple[Path, Path]:
         )
         .sign(key, hashes.SHA256())
     )
+    directory.mkdir(parents=True, exist_ok=True)
     cert_path = directory / "tls-cert.pem"
     key_path = directory / "tls-key.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return cert_path, key_path
+
+
+def make_client_ca(directory: Path) -> tuple[Path, Path]:
+    """A self-signed CA that issues client certificates for mTLS (spec 003 AC-1.5)."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "hyperbus-client-ca")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = directory / "client-ca.pem"
+    key_path = directory / "client-ca-key.pem"
+    directory.mkdir(parents=True, exist_ok=True)
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return cert_path, key_path
+
+
+def make_client_cert(
+    directory: Path,
+    ca_cert: Path,
+    ca_key: Path,
+    spiffe_id: str,
+) -> tuple[Path, Path]:
+    """A client certificate for ``spiffe_id``, signed by the given CA."""
+    issuer = x509.load_pem_x509_certificate(ca_cert.read_bytes())
+    signer = serialization.load_pem_private_key(ca_key.read_bytes(), password=None)
+    if not isinstance(signer, ec.EllipticCurvePrivateKey):
+        msg = "client CA key must be an EC key"
+        raise TypeError(msg)
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "worker")]))
+        .issuer_name(issuer.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.UniformResourceIdentifier(spiffe_id)]),
+            critical=False,
+        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
+            critical=False,
+        )
+        .sign(signer, hashes.SHA256())
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    cert_path = directory / "worker-cert.pem"
+    key_path = directory / "worker-key.pem"
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     key_path.write_bytes(
         key.private_bytes(

@@ -45,17 +45,28 @@ def default_socket_path() -> str | None:
     return None
 
 
-def _build_listener_tls(cert: Path | None, key: Path | None) -> ssl.SSLContext | None:
+def _build_listener_tls(
+    cert: Path | None,
+    key: Path | None,
+    client_ca: Path | None = None,
+) -> ssl.SSLContext | None:
     """Load the HTTP listener's TLS context, or ``None`` when TLS is not configured."""
-    if cert is None and key is None:
+    if cert is None and key is None and client_ca is None:
         return None
     if cert is None or key is None:
-        msg = "--tls-cert and --tls-key must be set together"
+        msg = (
+            "--tls-cert and --tls-key must be set together; "
+            "--tls-client-ca needs both"
+        )
         raise IdentityConfigError(msg)
     try:
-        return load_server_ssl_context(cert_path=cert, key_path=key)
+        return load_server_ssl_context(
+            cert_path=cert,
+            key_path=key,
+            client_ca_path=client_ca,
+        )
     except (OSError, ssl.SSLError) as exc:
-        msg = f"cannot load TLS certificate or key: {exc}"
+        msg = f"cannot load TLS certificate, key, or client CA: {exc}"
         raise IdentityConfigError(msg) from exc
 
 
@@ -232,6 +243,12 @@ def main() -> None:
         help="PEM private key for --tls-cert",
     )
     parser.add_argument(
+        "--tls-client-ca",
+        type=Path,
+        default=os.environ.get("HYPERBUS_TLS_CLIENT_CA"),
+        help="CA that client certificates must chain to (mTLS)",
+    )
+    parser.add_argument(
         "--database-url",
         default=None,
         help="Postgres URL (or set DATABASE_URL)",
@@ -287,9 +304,14 @@ def main() -> None:
             durable_audit=bool(database_url),
             allow_volatile_grants=args.allow_volatile_grants,
             audit_checkpoint_given=args.audit_checkpoint is not None,
-            tls_configured=args.tls_cert is not None or args.tls_key is not None,
+            tls_configured=any(
+                value is not None
+                for value in (args.tls_cert, args.tls_key, args.tls_client_ca)
+            ),
         )
-        ssl_context = _build_listener_tls(args.tls_cert, args.tls_key)
+        ssl_context = _build_listener_tls(
+            args.tls_cert, args.tls_key, args.tls_client_ca
+        )
         checkpoint = (
             load_audit_checkpoint(args.audit_checkpoint, tenant_id=args.tenant)
             if args.audit_checkpoint is not None

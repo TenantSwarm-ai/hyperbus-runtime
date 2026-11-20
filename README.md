@@ -79,7 +79,7 @@ hyperbus-worker python /app/support/graph.py
 
 With `DATABASE_URL` set, grant changes are audited in Postgres, and the engine rebuilds its grants from that log on boot. The YAML file only seeds regions the log has never decided, so a grant revoked at runtime stays revoked after a restart. Verified identity mode with a durable log also needs `--audit-checkpoint`, which is written once with `python -m hyperbus_runtime.audit_checkpoint` (spec 003 AC-6.6).
 
-Verified identity over HTTP needs TLS. Start the engine with `--listen`, `--tls-cert`, and `--tls-key` (or `HYPERBUS_TLS_CERT` and `HYPERBUS_TLS_KEY`). Plaintext HTTP is refused in verified mode. Workers reach an `https://` engine URL with `HYPERBUS_TLS_CA` set to the engine's CA, and a worker never sends `HYPERBUS_IDENTITY_TOKEN` over `http://`. Client certificates (mTLS) are not supported yet.
+Verified identity over HTTP needs TLS. Start the engine with `--listen`, `--tls-cert`, and `--tls-key` (or `HYPERBUS_TLS_CERT` and `HYPERBUS_TLS_KEY`). Plaintext HTTP is refused in verified mode. Workers reach an `https://` engine URL with `HYPERBUS_TLS_CA` set to the engine's CA, and a worker never sends `HYPERBUS_IDENTITY_TOKEN` over `http://`. For mTLS, start the engine with `--tls-client-ca` (or `HYPERBUS_TLS_CLIENT_CA`) so it requires a client certificate that chains to that CA. A worker presents `HYPERBUS_CLIENT_TLS_CERT` and `HYPERBUS_CLIENT_TLS_KEY` over `https://` only. A worker uses one credential, a client certificate or `HYPERBUS_IDENTITY_TOKEN`, never both; the client refuses to start with both set, and the engine denies a request that carries both.
 
 Docker Compose example: [`examples/docker-compose/`](examples/docker-compose/).
 

@@ -173,6 +173,22 @@ def connect_from_env(*, tenant_id: str, agent_id: str) -> EngineClient:
             "(HYPERBUS_ENGINE_URL)"
         )
         raise RuntimeError(msg)
+    client_cert = os.environ.get("HYPERBUS_CLIENT_TLS_CERT")
+    client_key = os.environ.get("HYPERBUS_CLIENT_TLS_KEY")
+    identity_token = os.environ.get("HYPERBUS_IDENTITY_TOKEN")
+    if bool(client_cert) != bool(client_key):
+        msg = (
+            "HYPERBUS_CLIENT_TLS_CERT and HYPERBUS_CLIENT_TLS_KEY "
+            "must be set together"
+        )
+        raise RuntimeError(msg)
+    if client_cert and identity_token:
+        # The gate denies a request with two credentials (AC-1.5). Fail before sending.
+        msg = (
+            "present one credential: a client certificate or HYPERBUS_IDENTITY_TOKEN, "
+            "not both"
+        )
+        raise RuntimeError(msg)
     ssl_context = None
     if http_url and http_url.startswith("https://"):
         ca_path = os.environ.get("HYPERBUS_TLS_CA")
@@ -183,10 +199,18 @@ def connect_from_env(*, tenant_id: str, agent_id: str) -> EngineClient:
             )
             raise RuntimeError(msg)
         try:
-            ssl_context = load_client_ssl_context(ca_path=ca_path)
+            ssl_context = load_client_ssl_context(
+                ca_path=ca_path,
+                cert_path=client_cert or None,
+                key_path=client_key or None,
+            )
         except OSError as exc:
-            msg = f"cannot load HYPERBUS_TLS_CA: {exc}"
+            msg = f"cannot load TLS CA or client certificate: {exc}"
             raise RuntimeError(msg) from exc
+    elif client_cert:
+        # A client certificate is only ever presented over TLS. Refuse, do not drop it.
+        msg = "HYPERBUS_CLIENT_TLS_CERT needs an https:// HYPERBUS_ENGINE_URL"
+        raise RuntimeError(msg)
     _ = tenant_id, agent_id
     return _RpcTransportClient(
         http_url=http_url,
