@@ -37,6 +37,7 @@ class _RpcTransportClient:
         socket_path: str | None = None,
         timeout: float = 30.0,
         rpc_token: str | None = None,
+        identity_token: str | None = None,
     ) -> None:
         if not http_url and not socket_path:
             msg = "Engine client requires http_url or socket_path"
@@ -50,6 +51,13 @@ class _RpcTransportClient:
             self._rpc_token = os.environ.get("HYPERBUS_RPC_TOKEN")
         else:
             self._rpc_token = None
+        # Bearer credential for verified mode (spec 003 AC-1.5). Declared-mode
+        # engines ignore it.
+        self._identity_token = (
+            identity_token
+            if identity_token is not None
+            else os.environ.get("HYPERBUS_IDENTITY_TOKEN")
+        )
 
     def call(
         self,
@@ -85,6 +93,8 @@ class _RpcTransportClient:
         headers = {"Content-Type": "application/json"}
         if self._rpc_token:
             headers["X-HyperBus-Token"] = self._rpc_token
+        if self._identity_token:
+            headers["Authorization"] = f"Bearer {self._identity_token}"
         request = urllib.request.Request(
             f"{self._http_url}/rpc",
             data=body,

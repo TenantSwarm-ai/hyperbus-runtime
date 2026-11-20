@@ -60,6 +60,16 @@ A local YAML file, loaded at startup and re-read on `SIGHUP`. The engine is the 
 ```yaml
 tenant_id: acme
 change_ref: CHG-1042            # optional; copied into audit, not enforced here
+verifiers:
+  jwt:
+    - issuer: "https://login.example.com/acme/v2.0"
+      audience: "api://hyperbus-acme"
+      jwks_url: "https://login.example.com/acme/discovery/keys"   # exactly one of jwks_url / jwks_file; https only
+      algorithms: [RS256]          # optional; allowlist of RS256, ES256 (default: both)
+      leeway_seconds: 60           # optional; 0-60 (AC-4.1)
+      max_age_seconds: 3600        # optional; 60-86400 (AC-4.2)
+  spiffe:
+    trust_domain: acme.example     # every spiffe identity must sit under this domain
 agents:
   support-bot:
     unix_uids: [1103]
@@ -80,7 +90,7 @@ agents:
     identities: []              # blocked: loads, denies everything
 ```
 
-Map rules are in AC-3.x below.
+Map rules are in AC-3.x below. A `jwt` identity must name an `issuer` declared under `verifiers.jwt`, and a `spiffe` identity requires `verifiers.spiffe`. Unknown keys are rejected at every level, and so are duplicate YAML keys, which would otherwise silently keep the last value.
 
 ## 6. Modes
 
@@ -101,7 +111,7 @@ Map rules are in AC-3.x below.
 
 ### US-2: Verified identity on the Unix socket
 
-- **AC-2.1:** In `verified` mode, every Unix connection must resolve to an agent through `SO_PEERCRED` uid, using the map's `unix_uids`. Missing peer credentials refuse the connection, as `resolve_agent_id` already does when a map is set.
+- **AC-2.1:** In `verified` mode, every Unix connection must resolve to an agent through `SO_PEERCRED` uid, using the map's `unix_uids`. Missing peer credentials refuse the connection, as `resolve_agent_id` already does when a map is set. `SO_PEERCRED` exists on Linux only (001 AC-6.1). On other platforms, a connection has no peer credentials and is refused with `no_peer_credentials`. Verified Unix mode is therefore Linux-only in this build.
 - **AC-2.2:** The declared `agent_id` must equal the resolved one. A mismatch is denied (the existing check, now mandatory).
 - **AC-2.3:** In `verified` mode, `unix_uids` in the identity map replace `--peer-agent-map`. One file is the source of truth. `declared` mode keeps the old peer-map behavior.
 
@@ -125,7 +135,7 @@ Map rules are in AC-3.x below.
 
 ### US-5: Audit and log hygiene
 
-- **AC-5.1:** Each denial emits `identity.denied` with transport, reason code, and the presented identity (SPIFFE ID, or JWT issuer and subject). Never the token or key material.
+- **AC-5.1:** Each denial emits `identity.denied` with transport, reason code, and the identity. Never the token or key material. The `identity` field is set only once a credential has verified (SPIFFE ID, or JWT issuer and subject). A denial before verification (`bad_token`, `unknown_issuer`, `bad_signature`, `no_credential`, and similar) records `identity: null`. Claims from an unverified token are attacker-controlled, so writing them to the audit trail would let a caller plant text in it.
 - **AC-5.2:** Each map load or reload emits `identity.map_loaded` with the map hash, `change_ref` if present, and identity counts per agent.
 - **AC-5.3:** Successful verifications are not audited per request.
 - **AC-5.4:** A red-team test scans logs and audit detail and fails if a token string, private key, or certificate PEM appears.
@@ -159,7 +169,13 @@ Map rules are in AC-3.x below.
 
 ## 9. Verification
 
-Adversarial tests, in `tests/test_identity_verified.py` (new) unless noted:
+Adversarial tests, in the files below (all new):
+
+- `tests/test_identity_map.py`: map validation, overlaps, bounds, duplicate keys, SPIFFE and JWT identity rules.
+- `tests/test_identity_verify.py`: JWT claims and signatures, algorithm confusion, JWKS freshness, SPIFFE certificate checks.
+- `tests/test_identity_gate.py`: decisions per credential, reload semantics, deny-all on failed reload, audit content.
+- `tests/test_identity_unix_verified.py`: real Unix socket and real peer uid (Linux). A fail-closed test runs on every platform.
+- `tests/test_identity_startup.py`: startup refusals, HTTP credential wiring, client bearer header, SIGHUP plumbing.
 
 | Test | Asserts |
 |---|---|
@@ -188,6 +204,30 @@ No test in `verified` mode may authenticate an agent from the request body.
 - **Q1 — Default mode (decided).** `declared` stays the default in 0.x for compatibility (Article V). The README marks it "not an identity boundary". The reference deployments (`examples/docker-compose`, `examples/systemd`) switch to `verified`.
 - **Q2 — Owner of identity-to-`agent_id` mapping (decided: runtime).** The logic stays in `hyperbus-runtime`, following the precedent in `peer_cred.py`. Maintainer sign-off under VII.1 is still required before merge.
 - **Q3 — Delivering map updates to self-hosted engines.** The engine must not call the cloud (VII.3). **Recommendation:** the operator distributes the file (GitOps or ConfigMap), and the engine reloads on `SIGHUP`. The cloud-hosted delivery path belongs in the cloud spec.
-- **Q4 — Clock skew.** 60 s proposed.
+- **Q4 — Clock skew.** 60 s proposed and enforced as the cap in code: `leeway_seconds` accepts 0-60 and defaults to 60.
 - **Q5 — Failed-reload policy (decided: deny-all).** A failed reload denies all identity-bound requests until a valid map loads (AC-3.7). This matches the cloud rule that stale policy denies at runtime.
 - **Q6 — Claim names and token types** for Entra and AgentCore (A-1). Confirm against vendor documentation before implementing those sources.
+
+## 11. Implementation Status
+
+Status as of this branch. "Implemented" means code exists and tests exercise it. Nothing below is deployable in `verified` mode until the HTTP and durable-state rows are closed.
+
+| Area | Status | Notes and evidence |
+|---|---|---|
+| Map load, validation, digest, blocked agents, overlap refusal (AC-3.1 to AC-3.5) | Implemented | `tests/test_identity_map.py` |
+| Per-request lookup and reload without restart (AC-3.6) | Implemented | Each request reads one state snapshot. `tests/test_identity_gate.py`, `tests/test_identity_unix_verified.py` |
+| Deny-all after a failed reload (AC-3.7, Q5) | Implemented | `tests/test_identity_gate.py`, `tests/test_identity_unix_verified.py` |
+| Unix binding by `SO_PEERCRED` uid (AC-2.1 to AC-2.3) | Implemented on Linux. Fails closed elsewhere | Real-peer tests run on Linux only. The fail-closed end-to-end test runs everywhere. See AC-2.1 |
+| JWT verification (AC-4.1, AC-4.2, AC-4.4) | Implemented | `tests/test_identity_verify.py`. Algorithm is checked before key lookup. The request path does no network I/O |
+| SPIFFE SAN, trust-domain, and validity checks (AC-4.3) | Implemented for the peer certificate dict | Chain verification against the trust bundle belongs to the TLS layer, which this build lacks |
+| Bearer and certificate credentials on HTTP (AC-1.1, AC-1.2, AC-1.3) | Implemented, exercised under an asserted secure transport | `tests/test_identity_startup.py`. The shared transport token alone does not authenticate |
+| HTTP over TLS (AC-1.4, 001 AC-7.1) | Not implemented | Verified mode refuses any HTTP listener at startup (`validate_identity_startup`, `HttpRpcServer`) |
+| Client presents an mTLS certificate (AC-1.5) | Not implemented | The client sends a bearer only, from `identity_token` or `HYPERBUS_IDENTITY_TOKEN` |
+| Audit: `identity.denied`, `identity.map_loaded`, `identity.map_rejected` (AC-5.1, AC-5.2) | Implemented | Audit `identity` is null before verification (AC-5.1) |
+| No token or key material in audit (AC-5.4) | Partly verified | Asserted for the verified bearer path only. No full log or PEM scan yet |
+| Durable grant state and replay (AC-6.1, AC-6.2, AC-6.4) | Not implemented | Needs the core tenant-wide replay API (AC-6.4). The runtime does not reimplement it |
+| Refuse volatile audit in verified mode (AC-6.3) | Implemented, with a consequence | `validate_identity_startup` refuses `InMemoryAuditStore` unless `--allow-volatile-grants` is set. `create_engine` always builds an `InMemoryAuditStore` today, so verified mode needs the dev flag to start |
+| No hosted calls (AC-7.1) | Met by design | The only network fetch is the customer's `jwks_url` |
+| CI check against hosted-package imports (AC-7.2) | Not implemented | No CI rule added |
+| Overhead measurement (AC-8.1) | Not measured | No performance claim is made |
+| Cloud delivery of map updates (Q3), Entra and AgentCore claim names (Q6) | Open | Q3 belongs to the cloud spec. Q6 needs vendor documentation |

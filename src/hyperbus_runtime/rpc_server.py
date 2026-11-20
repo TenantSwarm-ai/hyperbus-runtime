@@ -14,8 +14,15 @@ from typing import Any
 
 from hyperbus_core import AuditSink, HyperBusEngine
 
-from hyperbus_runtime.peer_cred import load_peer_agent_map, read_peer_identity, resolve_agent_id
-from hyperbus_runtime.rpc_dispatch import dispatch_request
+from hyperbus_runtime.identity_gate import IdentityConfigError, IdentityGate
+from hyperbus_runtime.identity_map import IdentityDenied
+from hyperbus_runtime.peer_cred import (
+    PeerIdentity,
+    load_peer_agent_map,
+    read_peer_identity,
+    resolve_agent_id,
+)
+from hyperbus_runtime.rpc_dispatch import RpcValidationError, dispatch_request
 
 
 def _secure_unix_socket(path: str, *, group_name: str | None) -> None:
@@ -34,11 +41,30 @@ def _secure_unix_socket(path: str, *, group_name: str | None) -> None:
     os.chown(path, -1, gid)
 
 
+def _bearer_token(header: str | None) -> str | None:
+    if not header:
+        return None
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def _peer_cert(conn: socket.socket) -> dict[str, Any] | None:
+    """Return the verified TLS peer certificate, or ``None`` on a plain socket."""
+    getter = getattr(conn, "getpeercert", None)
+    if getter is None:
+        return None
+    cert = getter()
+    return cert if isinstance(cert, dict) else None
+
+
 class RpcHttpHandler(BaseHTTPRequestHandler):
     engine: HyperBusEngine
     tenant_id: str
     audit: AuditSink | None
     rpc_token: str | None
+    gate: IdentityGate | None = None
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         return
@@ -50,6 +76,19 @@ class RpcHttpHandler(BaseHTTPRequestHandler):
         if self.rpc_token and self.headers.get("X-HyperBus-Token") != self.rpc_token:
             self.send_error(401, "Missing or invalid RPC token")
             return
+        gate = self.gate
+        verified = None
+        if gate is not None:
+            # Authenticate before reading the body, so an unauthenticated caller
+            # never gets dispatch or parse work (AC-1.1).
+            try:
+                verified = gate.authenticate_http(
+                    bearer=_bearer_token(self.headers.get("Authorization")),
+                    peer_cert=_peer_cert(self.connection),
+                )
+            except IdentityDenied as exc:
+                self.send_error(exc.http_status, exc.reason)
+                return
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
         try:
@@ -57,11 +96,26 @@ class RpcHttpHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self.send_error(400, "Invalid JSON body")
             return
+        if gate is not None and verified is not None:
+            if not isinstance(payload, dict):
+                self.send_error(400, "RPC body must be a JSON object")
+                return
+            try:
+                gate.check_declared(
+                    verified,
+                    declared=payload.get("agent_id"),
+                    transport="http",
+                )
+            except IdentityDenied as exc:
+                self.send_error(exc.http_status, exc.reason)
+                return
+            payload["agent_id"] = verified.agent_id
         response = dispatch_request(
             self.engine,
             payload,
             expected_tenant_id=self.tenant_id,
             audit=self.audit,
+            peer_agent_id=verified.agent_id if verified is not None else None,
         )
         encoded = json.dumps(response).encode("utf-8")
         self.send_response(200)
@@ -71,6 +125,21 @@ class RpcHttpHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
 
+def _bind_unix_verified(
+    gate: IdentityGate,
+    peer: PeerIdentity | None,
+    payload: Any,
+) -> str:
+    """Verified mode: the peer uid decides the agent; the envelope may only repeat it."""
+    if not isinstance(payload, dict):
+        msg = "RPC envelope must be a JSON object"
+        raise RpcValidationError(msg)
+    verified = gate.authenticate_unix(peer)
+    gate.check_declared(verified, declared=payload.get("agent_id"), transport="unix")
+    payload["agent_id"] = verified.agent_id
+    return verified.agent_id
+
+
 def _handle_unix_connection(
     conn: socket.socket,
     *,
@@ -78,6 +147,7 @@ def _handle_unix_connection(
     tenant_id: str,
     audit: AuditSink | None,
     peer_agent_map: dict[int, str],
+    gate: IdentityGate | None = None,
 ) -> None:
     peer = read_peer_identity(conn)
     file_obj = conn.makefile("rb")
@@ -88,14 +158,17 @@ def _handle_unix_connection(
                 break
             try:
                 payload = json.loads(line.decode("utf-8"))
-                declared = payload.get("agent_id")
                 peer_agent_id: str | None = None
-                if isinstance(declared, str):
-                    peer_agent_id = resolve_agent_id(
-                        declared_agent_id=declared,
-                        peer=peer,
-                        peer_agent_map=peer_agent_map,
-                    )
+                if gate is not None:
+                    peer_agent_id = _bind_unix_verified(gate, peer, payload)
+                else:
+                    declared = payload.get("agent_id")
+                    if isinstance(declared, str):
+                        peer_agent_id = resolve_agent_id(
+                            declared_agent_id=declared,
+                            peer=peer,
+                            peer_agent_map=peer_agent_map,
+                        )
                 response = dispatch_request(
                     engine,
                     payload,
@@ -125,6 +198,7 @@ class UnixRpcServer:
         audit: AuditSink | None = None,
         peer_agent_map: dict[int, str] | None = None,
         socket_group: str | None = None,
+        gate: IdentityGate | None = None,
     ) -> None:
         self._socket_path = socket_path
         self._engine = engine
@@ -132,6 +206,7 @@ class UnixRpcServer:
         self._audit = audit
         self._peer_agent_map = peer_agent_map or {}
         self._socket_group = socket_group
+        self._gate = gate
         self._server: socketserver.ThreadingUnixStreamServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -148,6 +223,7 @@ class UnixRpcServer:
         peer_agent_map = self._peer_agent_map
         socket_path = self._socket_path
         socket_group = self._socket_group
+        gate = self._gate
 
         class _Handler(socketserver.BaseRequestHandler):
             def handle(self) -> None:
@@ -157,6 +233,7 @@ class UnixRpcServer:
                     tenant_id=tenant_id,
                     audit=audit,
                     peer_agent_map=peer_agent_map,
+                    gate=gate,
                 )
 
         self._server = socketserver.ThreadingUnixStreamServer(
@@ -192,7 +269,15 @@ class HttpRpcServer:
         tenant_id: str,
         audit: AuditSink | None = None,
         rpc_token: str | None = None,
+        gate: IdentityGate | None = None,
+        transport_secure: bool = False,
     ) -> None:
+        if gate is not None and not transport_secure:
+            msg = (
+                "verified identity over HTTP requires TLS (001 AC-7.1); "
+                "this build has no TLS listener"
+            )
+            raise IdentityConfigError(msg)
         handler = type(
             "BoundRpcHttpHandler",
             (RpcHttpHandler,),
@@ -201,6 +286,7 @@ class HttpRpcServer:
                 "tenant_id": tenant_id,
                 "audit": audit,
                 "rpc_token": rpc_token,
+                "gate": gate,
             },
         )
         self._httpd = ThreadingHTTPServer((host, port), handler)
