@@ -147,6 +147,7 @@ Map rules are in AC-3.x below. A `jwt` identity must name an `issuer` declared u
 - **AC-6.2:** A grant revoked in audit stays revoked after restart, even if the YAML still lists it.
 - **AC-6.3:** `verified` mode refuses to start with `InMemoryAuditStore`. A dev-only `--allow-volatile-grants` flag overrides this and logs a warning.
 - **AC-6.4 (core dependency):** Rebuilding from the whole tenant's audit log needs a tenant-wide replay API in `hyperbus-core`. Core has per-agent `grants_at` today. The runtime does not reimplement replay (VII.1). The API is specified in hyperbus-core `specs/014-tenant-grant-replay` (Draft): `replay_tenant_grants` and `rebuild_registry`.
+- **AC-6.6 (completeness checkpoint):** In `verified` mode, boot requires an operator-held checkpoint of the audit tip (`--audit-checkpoint <file>`). The engine checks the log against it through core `replay_tenant_grants(checkpoint=...)` (core 014 AC-14.24). A missing or non-matching checkpoint refuses startup, so removed tail events are detected at boot. The engine makes no network call to fetch it (AC-7.1).
 - **AC-6.5 (boot guard):** Until `rebuild_registry` exists, `create_engine` must not run with a durable audit store. Today it re-applies the YAML on every boot, which appends a new `grant.created` after any revoke. A durable store would then bring a revoked grant back as effective (reproduced on hyperbus-core `main`).
 
 ### US-7: Boundary and self-hosting
@@ -226,7 +227,7 @@ Status as of this branch. "Implemented" means code exists and tests exercise it.
 | Client presents an mTLS certificate (AC-1.5) | Not implemented | The client sends a bearer only, from `identity_token` or `HYPERBUS_IDENTITY_TOKEN` |
 | Audit: `identity.denied`, `identity.map_loaded`, `identity.map_rejected` (AC-5.1, AC-5.2) | Implemented | Audit `identity` is null before verification (AC-5.1) |
 | No token or key material in audit (AC-5.4) | Partly verified | Asserted for the verified bearer path only. No full log or PEM scan yet |
-| Durable grant state and replay (AC-6.1, AC-6.2, AC-6.4, AC-6.5) | Not implemented. Blocked on core | The API is specified in hyperbus-core `specs/014-tenant-grant-replay` (Draft). Until it lands, the boot path must not use a durable store (AC-6.5) |
+| Durable grant state and replay (AC-6.1, AC-6.2, AC-6.4, AC-6.5, AC-6.6) | Not implemented. Blocked on core | The API is specified in hyperbus-core `specs/014-tenant-grant-replay` (Draft, decisions Q1 to Q3 recorded). Until it lands, the boot path must not use a durable store (AC-6.5). Verified mode then needs the checkpoint (AC-6.6) |
 | Refuse volatile audit in verified mode (AC-6.3) | Implemented, with a consequence | `validate_identity_startup` refuses `InMemoryAuditStore` unless `--allow-volatile-grants` is set. `create_engine` always builds an `InMemoryAuditStore` today, so verified mode needs the dev flag to start |
 | No hosted calls (AC-7.1) | Met by design | The only network fetch is the customer's `jwks_url` |
 | CI check against hosted-package imports (AC-7.2) | Not implemented | No CI rule added |
